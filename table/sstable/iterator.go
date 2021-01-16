@@ -328,7 +328,7 @@ func (itr *Iterator) seekBlockWithPlr(key []byte) int {
 	// Code block option 1:
 	// p := unsafe.Pointer(&key[0])
 	// keyAsUint32 := *(*uint32)(p) // gives the wrong key as byte stored as BigEndian
-	// keyAsUint32 = MinUint(uint32(12345), keyAsUint32)
+	// keyAsUint32 = MinUint(uint32(rand.Int31n(1234567)), keyAsUint32)
 	// use a wrong key to test performance
 	// gives 1633 ns/op
 
@@ -336,7 +336,13 @@ func (itr *Iterator) seekBlockWithPlr(key []byte) int {
 	keyAsUint32 := binary.BigEndian.Uint32(key)
 	// gives 2921 ns/op
 
-	predictedIndex, err := itr.plr.predict(float64(keyAsUint32))
+	// Code block option 3:
+	// keyAsUint32 := binary.BigEndian.Uint32(key)
+	// keyAsUint32 = MinUint(uint32(rand.Int31n(1234)), keyAsUint32)
+	// gives 1600 ns/op
+
+	f := float64(keyAsUint32)
+	predictedIndex, err := itr.plr.predict(f)
 	if err != nil {
 		log.Warn("?????????????? plr predict failed", zap.Error(err)) // this line may never be hit
 		return maxBlockSize // meaning we didn't find a block
@@ -372,7 +378,7 @@ func (itr *Iterator) seekFrom(key []byte) {
 
 	var idx int
 
-	idx = itr.seekBlockWithPlr(key)
+	idx = itr.seekBlock(key)
 	if itr.err != nil {
 		return
 	}

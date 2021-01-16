@@ -340,7 +340,7 @@ func (b *Builder) finishBlock() error {
 	numBlocks := len(b.baseKeys.endOffs)
 	// By @spongedu
 	// We suppose input as a 8 byte uint here.
-	b.mw.Write([]byte(fmt.Sprintf("%d,%d\n", binary.BigEndian.Uint64(firstKey), numBlocks)))
+	b.mw.Write([]byte(fmt.Sprintf("%d,%d\n", binary.BigEndian.Uint32(firstKey), numBlocks)))
 
 	before := b.w.Offset()
 	if err := b.compression.Compress(b.w, b.buf); err != nil {

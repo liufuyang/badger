@@ -314,7 +314,7 @@ func (itr *Iterator) seekBlockWithPlr(key []byte) int {
 	}
 
 	// by @spongedu. We suppose key as first
-	predictedIndex, err := itr.plr.predict(float64(binary.BigEndian.Uint64(key)))
+	predictedIndex, err := itr.plr.predict(float64(binary.BigEndian.Uint32(key)))
 	if err != nil {
 		//log.Warn("plr predict failed", zap.Error(err))
 		return itr.seekBlock(key)

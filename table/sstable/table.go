@@ -205,11 +205,14 @@ func (t *Table) NewIterator(reversed bool) y.Iterator {
 }
 
 func (t *Table) Get(key y.Key, keyHash uint64) (y.ValueStruct, error) {
-	resultKey, resultVs, ok, err := t.pointGet(key, keyHash)
-	if err != nil {
-		return y.ValueStruct{}, err
-	}
-	if !ok {
+	var resultKey y.Key
+	var resultVs y.ValueStruct
+
+	//resultKey, resultVs, ok, err := t.pointGet(key, keyHash)
+	//if err != nil {
+	//	return y.ValueStruct{}, err
+	//}
+	//if !ok {
 		it := t.NewIterator(false)
 		it.Seek(key.UserKey)
 		if !it.Valid() {
@@ -219,9 +222,9 @@ func (t *Table) Get(key y.Key, keyHash uint64) (y.ValueStruct, error) {
 			return y.ValueStruct{}, nil
 		}
 		resultKey, resultVs = it.Key(), it.Value()
-	} else if resultKey.IsEmpty() {
-		return y.ValueStruct{}, nil
-	}
+	//} else if resultKey.IsEmpty() {
+	//	return y.ValueStruct{}, nil
+	//}
 	result := resultVs
 	result.Version = resultKey.Version
 	return result, nil

@@ -21,10 +21,11 @@ import (
 	"encoding/binary"
 	"github.com/pingcap/badger/surf"
 	"github.com/pingcap/badger/y"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 	"io"
 	"math"
 	"sort"
-	"unsafe"
 )
 
 type singleKeyIterator struct {
@@ -308,6 +309,13 @@ func Min(x, y int) int {
 	return x
 }
 
+func MinUint(x, y uint32) uint32 {
+	if x > y {
+		return y
+	}
+	return x
+}
+
 func (itr *Iterator) seekBlockWithPlr(key []byte) int {
 	if itr.plr == nil {
 		//log.Error("This table has no plr and no training file there?")
@@ -315,17 +323,27 @@ func (itr *Iterator) seekBlockWithPlr(key []byte) int {
 	}
 
 	// by @spongedu. We suppose key as first
-	p := unsafe.Pointer(&key)
-	keyAsUint32 := *(*uint32)(p)
+	maxBlockSize := len(itr.tIdx.blockEndOffsets)
+
+	// Code block option 1:
+	// p := unsafe.Pointer(&key[0])
+	// keyAsUint32 := *(*uint32)(p) // gives the wrong key as byte stored as BigEndian
+	// keyAsUint32 = MinUint(uint32(12345), keyAsUint32)
+	// use a wrong key to test performance
+	// gives 1633 ns/op
+
+	// Code block option 2:
+	keyAsUint32 := binary.BigEndian.Uint32(key)
+	// gives 2921 ns/op
+
 	predictedIndex, err := itr.plr.predict(float64(keyAsUint32))
 	if err != nil {
-		//log.Warn("plr predict failed", zap.Error(err))
-		return itr.seekBlock(key)
+		log.Warn("?????????????? plr predict failed", zap.Error(err)) // this line may never be hit
+		return maxBlockSize // meaning we didn't find a block
 	}
 
 	// Adding an extra 1 for the upper bound to be more conservative
 	// for example with predictedIndex=108.5, we ended with lower=100, upper=117 not 116
-	maxBlockSize := len(itr.tIdx.blockEndOffsets)
 	lower, upper :=
 		Max(int(predictedIndex)-8, 0), Min(int(predictedIndex)+8+1, maxBlockSize)
 
@@ -333,7 +351,8 @@ func (itr *Iterator) seekBlockWithPlr(key []byte) int {
 	// make sure lower and upper are all valid,
 	// as lower might be a value predicted to be too big, upper might be too small
 	if lower >= maxBlockSize || upper < 1 {
-		return itr.seekBlock(key)
+		log.Info("???????????????????????????????", zap.Uint32("key", keyAsUint32), zap.Float64("pred", predictedIndex))
+		return maxBlockSize
 	}
 
 	targetIndex := sort.Search(upper-lower, func(idx int) bool {

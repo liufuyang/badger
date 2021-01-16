@@ -58,7 +58,7 @@ type plrSegment struct {
 }
 
 type plrSegments struct {
-	FName  string
+	FName string
 	inner []plrSegment
 }
 
@@ -254,16 +254,23 @@ func (t *Table) NewIterator(reversed bool) y.Iterator {
 
 func (t *Table) Get(key y.Key, keyHash uint64) (y.ValueStruct, error) {
 	// By @spongedu. disable pointGet for now to try plr search
-	// ok := false
-	// var resultKey y.Key
-	// var resultVs y.ValueStruct
-	resultKey, resultVs, ok, err := t.pointGet(key, keyHash)
-	if err != nil {
-		return y.ValueStruct{}, err
-	}
+	//ok := false
+	var resultKey y.Key
+	var resultVs y.ValueStruct
+	//resultKey, resultVs, ok, err := t.pointGet(key, keyHash)
+	//if err != nil {
+	//	return y.ValueStruct{}, err
+	//}
 	/*
-	 */
-	if !ok {
+	 // PointGet hit rate very high!
+		if ok {
+			log.Println("Point Hit!")
+		} else {
+			log.Println("Point get not hit")
+		}
+	*/
+
+	//if !ok {
 		it := t.NewIterator(false)
 		it.Seek(key.UserKey)
 		if !it.Valid() {
@@ -273,9 +280,9 @@ func (t *Table) Get(key y.Key, keyHash uint64) (y.ValueStruct, error) {
 			return y.ValueStruct{}, nil
 		}
 		resultKey, resultVs = it.Key(), it.Value()
-	} else if resultKey.IsEmpty() {
+	/*} else if resultKey.IsEmpty() {
 		return y.ValueStruct{}, nil
-	}
+	}*/
 	result := resultVs
 	result.Version = resultKey.Version
 	return result, nil

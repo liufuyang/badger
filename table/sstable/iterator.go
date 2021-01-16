@@ -24,6 +24,7 @@ import (
 	"io"
 	"math"
 	"sort"
+	"unsafe"
 )
 
 type singleKeyIterator struct {
@@ -314,7 +315,9 @@ func (itr *Iterator) seekBlockWithPlr(key []byte) int {
 	}
 
 	// by @spongedu. We suppose key as first
-	predictedIndex, err := itr.plr.predict(float64(binary.BigEndian.Uint32(key)))
+	p := unsafe.Pointer(&key)
+	keyAsUint32 := *(*uint32)(p)
+	predictedIndex, err := itr.plr.predict(float64(keyAsUint32))
 	if err != nil {
 		//log.Warn("plr predict failed", zap.Error(err))
 		return itr.seekBlock(key)

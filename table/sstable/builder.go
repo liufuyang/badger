@@ -311,10 +311,11 @@ func (b *Builder) finishBlock() error {
 	}
 	firstKey := b.tmpKeys.getEntry(0)
 
+	lastKey := b.tmpKeys.getLast()
+	blockCommonLen := keyDiffIdx(firstKey, lastKey)
+	// Roll back by fuyang
 	// By @spongedu. disable key compressionj
-	// lastKey := b.tmpKeys.getLast()
-	// blockCommonLen := keyDiffIdx(firstKey, lastKey)
-	blockCommonLen := 0
+	// blockCommonLen := 0
 
 	for i := 0; i < b.tmpKeys.length(); i++ {
 		key := b.tmpKeys.getEntry(i)

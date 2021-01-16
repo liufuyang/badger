@@ -17,12 +17,16 @@
 package sstable
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,13 +43,39 @@ import (
 )
 
 const (
-	fileSuffix    = ".sst"
-	idxFileSuffix = ".idx"
+	fileSuffix      = ".sst"
+	idxFileSuffix   = ".idx"
+	modelFileSuffix = ".mod"
 
 	intSize = int(unsafe.Sizeof(int(0)))
 )
 
+type plrSegment struct {
+	Start     float64 `json:"start"`
+	Stop      float64 `json:"stop"`
+	Slope     float64 `json:"slope"`
+	Intercept float64 `json:"intercept"`
+}
+
+type plrSegments struct {
+	FName string
+	inner []plrSegment
+}
+
+func (s *plrSegments) predict(key float64) (float64, error) {
+	segmentIndex := sort.Search(len(s.inner), func(i int) bool { return s.inner[i].Stop > key })
+	if segmentIndex == len(s.inner) {
+		return 0.0, errors.New(fmt.Sprintf("key %f not found in any segment range", key))
+	}
+	segment := s.inner[segmentIndex]
+	return segment.Slope*key + segment.Intercept, nil
+}
+
 func IndexFilename(tableFilename string) string { return tableFilename + idxFileSuffix }
+
+func ModelFilename(tableFilename string) string {
+	return tableFilename + modelFileSuffix
+}
 
 type tableIndex struct {
 	blockEndOffsets []uint32
@@ -82,6 +112,9 @@ type Table struct {
 
 	oldBlockLen int64
 	oldBlock    []byte
+
+	// For plr
+	plr *plrSegments
 }
 
 // CompressionType returns the compression algorithm used for block compression.
@@ -146,12 +179,27 @@ func OpenTable(filename string, blockCache *cache.Cache, indexCache *cache.Cache
 		return nil, err
 	}
 
+	var plr *plrSegments = nil
+	out, err := exec.Command("./plr", "-i", ModelFilename(filename), "-e", "8.0").Output()
+	if err != nil {
+		if e, ok := err.(*exec.ExitError); ok {
+			fmt.Printf("%s\n", string(e.Stderr))
+		}
+		log.Fatal(err.Error())
+	} else {
+		data := []plrSegment{}
+		json.Unmarshal(out, &data)
+		log.Printf("plrSegment loaded: %v", data)
+		plr = &plrSegments{inner: data, FName: filename}
+	}
+
 	t := &Table{
 		fd:         fd,
 		indexFd:    indexFd,
 		id:         id,
 		blockCache: blockCache,
 		indexCache: indexCache,
+		plr:        plr,
 	}
 
 	if err := t.initTableInfo(); err != nil {
@@ -205,11 +253,24 @@ func (t *Table) NewIterator(reversed bool) y.Iterator {
 }
 
 func (t *Table) Get(key y.Key, keyHash uint64) (y.ValueStruct, error) {
-	resultKey, resultVs, ok, err := t.pointGet(key, keyHash)
-	if err != nil {
-		return y.ValueStruct{}, err
-	}
-	if !ok {
+	// By @spongedu. disable pointGet for now to try plr search
+	//ok := false
+	var resultKey y.Key
+	var resultVs y.ValueStruct
+	//resultKey, resultVs, ok, err := t.pointGet(key, keyHash)
+	//if err != nil {
+	//	return y.ValueStruct{}, err
+	//}
+	/*
+	 // PointGet hit rate very high!
+		if ok {
+			log.Println("Point Hit!")
+		} else {
+			log.Println("Point get not hit")
+		}
+	*/
+
+	//if !ok {
 		it := t.NewIterator(false)
 		it.Seek(key.UserKey)
 		if !it.Valid() {
@@ -219,9 +280,9 @@ func (t *Table) Get(key y.Key, keyHash uint64) (y.ValueStruct, error) {
 			return y.ValueStruct{}, nil
 		}
 		resultKey, resultVs = it.Key(), it.Value()
-	} else if resultKey.IsEmpty() {
+	/*} else if resultKey.IsEmpty() {
 		return y.ValueStruct{}, nil
-	}
+	}*/
 	result := resultVs
 	result.Version = resultKey.Version
 	return result, nil

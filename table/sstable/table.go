@@ -180,7 +180,7 @@ func OpenTable(filename string, blockCache *cache.Cache, indexCache *cache.Cache
 	}
 
 	var plr *plrSegments = nil
-	out, err := exec.Command("./plr", "-i", ModelFilename(filename), "-e", "1.0").Output()
+	out, err := exec.Command("./plr", "-i", ModelFilename(filename), "-e", "8.0").Output()
 	if err != nil {
 		if e, ok := err.(*exec.ExitError); ok {
 			fmt.Printf("%s\n", string(e.Stderr))

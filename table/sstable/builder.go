@@ -19,9 +19,12 @@ package sstable
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"go.uber.org/zap"
 	"math"
 	"os"
 	"reflect"
+	"strings"
 	"unsafe"
 
 	"github.com/coocood/bbloom"
@@ -30,6 +33,7 @@ import (
 	"github.com/pingcap/badger/options"
 	"github.com/pingcap/badger/surf"
 	"github.com/pingcap/badger/y"
+	"github.com/pingcap/log"
 	"golang.org/x/time/rate"
 )
 
@@ -82,6 +86,7 @@ type Builder struct {
 
 	file          *os.File
 	w             tableWriter
+	mw            tableWriter
 	buf           []byte
 	writtenLen    int
 	rawWrittenLen int
@@ -113,6 +118,9 @@ type Builder struct {
 
 	singleKeyOldVers entrySlice
 	oldBlock         []byte
+
+	level int
+	bufSize int
 }
 
 type tableWriter interface {
@@ -142,6 +150,7 @@ func (w *inMemWriter) Finish() error {
 // If the f is nil, the builder builds in-memory result.
 // If the limiter is nil, the write speed during table build will not be limited.
 func NewTableBuilder(f *os.File, limiter *rate.Limiter, level int, opt options.TableBuilderOptions) *Builder {
+	log.Warn("GEN SSTABLE", zap.String("File: ", f.Name()), zap.Int("Level", level))
 	t := float64(opt.LevelSizeMultiplier)
 	fprBase := math.Pow(t, 1/(t-1)) * opt.LogicalBloomFPR * (t - 1)
 	levelFactor := math.Pow(t, float64(opt.MaxLevels-level))
@@ -155,7 +164,17 @@ func NewTableBuilder(f *os.File, limiter *rate.Limiter, level int, opt options.T
 		useSuRF:     level >= opt.SuRFStartLevel,
 		// add one byte so the offset would never be 0, so oldOffset is 0 means no old version.
 		oldBlock: []byte{0},
+
+		level: level,
+		bufSize: opt.WriteBufferSize,
 	}
+	modFile, err := y.OpenTruncFile(ModelFilename(b.file.Name()), false)
+	if err != nil {
+		panic(err)
+	}
+	b.mw = fileutil.NewDirectWriter(f, opt.WriteBufferSize, limiter)
+	b.mw.Reset(modFile)
+
 	if f != nil {
 		b.w = fileutil.NewDirectWriter(f, opt.WriteBufferSize, limiter)
 	} else {
@@ -182,6 +201,13 @@ func (b *Builder) Reset(f *os.File) {
 	b.file = f
 	b.resetBuffers()
 	b.w.Reset(f)
+
+	modFile, err := y.OpenTruncFile(ModelFilename(b.file.Name()), false)
+	if err != nil {
+		panic(err)
+	}
+	b.mw = fileutil.NewDirectWriter(f, b.bufSize, nil)
+	b.mw.Reset(modFile)
 }
 
 // SetIsManaged should be called when ingesting a table into a managed DB.
@@ -285,8 +311,12 @@ func (b *Builder) finishBlock() error {
 		b.flushSingleKeyOldVers()
 	}
 	firstKey := b.tmpKeys.getEntry(0)
-	lastKey := b.tmpKeys.getLast()
-	blockCommonLen := keyDiffIdx(firstKey, lastKey)
+
+	// By @spongedu. disable key compressionj
+	// lastKey := b.tmpKeys.getLast()
+	// blockCommonLen := keyDiffIdx(firstKey, lastKey)
+	blockCommonLen := 0
+
 	for i := 0; i < b.tmpKeys.length(); i++ {
 		key := b.tmpKeys.getEntry(i)
 		b.buf = appendU16(b.buf, uint16(len(key)-blockCommonLen))
@@ -304,8 +334,12 @@ func (b *Builder) finishBlock() error {
 	b.buf = append(b.buf, u32ToBytes(uint32(len(b.entryEndOffsets)))...)
 	b.buf = appendU16(b.buf, uint16(blockCommonLen))
 
+
 	// Add base key.
 	b.baseKeys.append(firstKey)
+
+	numBlocks := len(b.baseKeys.endOffs)
+	b.mw.Write([]byte(fmt.Sprintf("%s,%d\n", strings.Trim(string(firstKey), " "), numBlocks)))
 
 	before := b.w.Offset()
 	if err := b.compression.Compress(b.w, b.buf); err != nil {
@@ -315,6 +349,19 @@ func (b *Builder) finishBlock() error {
 	b.blockEndOffsets = append(b.blockEndOffsets, uint32(b.writtenLen+int(size)))
 	b.writtenLen += int(size)
 	b.rawWrittenLen += len(b.buf)
+
+	// ADD BY @spongedu. Add Debug info
+	fileName := b.file.Name()
+	blockSize := len(b.buf)
+	blockSizeInFile := int(size)
+	entryCount := len(b.entryEndOffsets)
+
+	log.Warn("DUMPING A BLOCK:",
+		zap.String("File", fileName),
+		zap.Int("BlockNum", numBlocks),
+		zap.Int("BlockSize", blockSize),
+		zap.Int("BlockSizeInFile", blockSizeInFile),
+		zap.Int("EntryCnt", entryCount))
 
 	// Reset the block for the next build.
 	b.entryEndOffsets = b.entryEndOffsets[:0]
@@ -415,6 +462,10 @@ func (b *Builder) Finish() (*BuildResult, error) {
 			return nil, err
 		}
 	}
+
+	// ADD By @spongedu.
+	writtenSize:= b.w.Offset()
+
 	if err = b.w.Finish(); err != nil {
 		return nil, err
 	}
@@ -447,6 +498,19 @@ func (b *Builder) Finish() (*BuildResult, error) {
 	if len(b.oldBlock) > 1 {
 		encoder.append(u32ToBytes(uint32(len(b.oldBlock))), idOldBlockLen)
 	}
+
+	// ADD BY @spongedu. Add Debug info
+	fileName := b.file.Name()
+	smallest := b.smallest.String()
+	biggest := b.biggest.String()
+	blockCnt := len(b.baseKeys.endOffs)
+
+	log.Info("DUMPING A FILE:",
+		zap.String("File", fileName),
+		zap.Int("BlockCnt", blockCnt),
+		zap.Int64("DataFileSize", writtenSize),
+		zap.String("Smallest", smallest),
+		zap.String("Biggest", biggest))
 
 	var bloomFilter []byte
 	if !b.useSuRF {
@@ -483,6 +547,9 @@ func (b *Builder) Finish() (*BuildResult, error) {
 	}
 	if b.file == nil {
 		result.IndexData = y.Copy(b.w.(*inMemWriter).Bytes())
+	}
+	if err = b.mw.Finish(); err != nil {
+		panic(err)
 	}
 	return result, nil
 }

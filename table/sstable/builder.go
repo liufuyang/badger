@@ -20,11 +20,10 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"go.uber.org/zap"
+	//"go.uber.org/zap"
 	"math"
 	"os"
 	"reflect"
-	"strings"
 	"unsafe"
 
 	"github.com/coocood/bbloom"
@@ -33,7 +32,7 @@ import (
 	"github.com/pingcap/badger/options"
 	"github.com/pingcap/badger/surf"
 	"github.com/pingcap/badger/y"
-	"github.com/pingcap/log"
+	//"github.com/pingcap/log"
 	"golang.org/x/time/rate"
 )
 
@@ -150,7 +149,7 @@ func (w *inMemWriter) Finish() error {
 // If the f is nil, the builder builds in-memory result.
 // If the limiter is nil, the write speed during table build will not be limited.
 func NewTableBuilder(f *os.File, limiter *rate.Limiter, level int, opt options.TableBuilderOptions) *Builder {
-	log.Warn("GEN SSTABLE", zap.String("File: ", f.Name()), zap.Int("Level", level))
+	//log.Warn("GEN SSTABLE", zap.String("File: ", f.Name()), zap.Int("Level", level))
 	t := float64(opt.LevelSizeMultiplier)
 	fprBase := math.Pow(t, 1/(t-1)) * opt.LogicalBloomFPR * (t - 1)
 	levelFactor := math.Pow(t, float64(opt.MaxLevels-level))
@@ -312,10 +311,11 @@ func (b *Builder) finishBlock() error {
 	}
 	firstKey := b.tmpKeys.getEntry(0)
 
+	lastKey := b.tmpKeys.getLast()
+	blockCommonLen := keyDiffIdx(firstKey, lastKey)
+	// Roll back by fuyang
 	// By @spongedu. disable key compressionj
-	// lastKey := b.tmpKeys.getLast()
-	// blockCommonLen := keyDiffIdx(firstKey, lastKey)
-	blockCommonLen := 0
+	// blockCommonLen := 0
 
 	for i := 0; i < b.tmpKeys.length(); i++ {
 		key := b.tmpKeys.getEntry(i)
@@ -339,7 +339,9 @@ func (b *Builder) finishBlock() error {
 	b.baseKeys.append(firstKey)
 
 	numBlocks := len(b.baseKeys.endOffs)
-	b.mw.Write([]byte(fmt.Sprintf("%s,%d\n", strings.Trim(string(firstKey), " "), numBlocks)))
+	// By @spongedu
+	// We suppose input as a 8 byte uint here.
+	b.mw.Write([]byte(fmt.Sprintf("%d,%d\n", binary.BigEndian.Uint32(firstKey), numBlocks)))
 
 	before := b.w.Offset()
 	if err := b.compression.Compress(b.w, b.buf); err != nil {
@@ -350,6 +352,7 @@ func (b *Builder) finishBlock() error {
 	b.writtenLen += int(size)
 	b.rawWrittenLen += len(b.buf)
 
+	/*
 	// ADD BY @spongedu. Add Debug info
 	fileName := b.file.Name()
 	blockSize := len(b.buf)
@@ -362,6 +365,7 @@ func (b *Builder) finishBlock() error {
 		zap.Int("BlockSize", blockSize),
 		zap.Int("BlockSizeInFile", blockSizeInFile),
 		zap.Int("EntryCnt", entryCount))
+	 */
 
 	// Reset the block for the next build.
 	b.entryEndOffsets = b.entryEndOffsets[:0]
@@ -464,7 +468,7 @@ func (b *Builder) Finish() (*BuildResult, error) {
 	}
 
 	// ADD By @spongedu.
-	writtenSize:= b.w.Offset()
+	//writtenSize:= b.w.Offset()
 
 	if err = b.w.Finish(); err != nil {
 		return nil, err
@@ -499,6 +503,7 @@ func (b *Builder) Finish() (*BuildResult, error) {
 		encoder.append(u32ToBytes(uint32(len(b.oldBlock))), idOldBlockLen)
 	}
 
+	/*
 	// ADD BY @spongedu. Add Debug info
 	fileName := b.file.Name()
 	smallest := b.smallest.String()
@@ -511,6 +516,7 @@ func (b *Builder) Finish() (*BuildResult, error) {
 		zap.Int64("DataFileSize", writtenSize),
 		zap.String("Smallest", smallest),
 		zap.String("Biggest", biggest))
+	 */
 
 	var bloomFilter []byte
 	if !b.useSuRF {

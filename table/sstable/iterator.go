@@ -19,15 +19,12 @@ package sstable
 import (
 	"bytes"
 	"encoding/binary"
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
+	"github.com/pingcap/badger/surf"
+	"github.com/pingcap/badger/y"
 	"io"
 	"math"
 	"sort"
-	"strconv"
-
-	"github.com/pingcap/badger/surf"
-	"github.com/pingcap/badger/y"
+	"unsafe"
 )
 
 type singleKeyIterator struct {
@@ -313,14 +310,16 @@ func Min(x, y int) int {
 
 func (itr *Iterator) seekBlockWithPlr(key []byte) int {
 	if itr.plr == nil {
-		log.Fatal("This table has no plr and no training file there?")
+		//log.Error("This table has no plr and no training file there?")
 		return itr.seekBlock(key)
 	}
 
-	k, _ := strconv.Atoi(string(key))
-	predictedIndex, err := itr.plr.predict(float64(k))
+	// by @spongedu. We suppose key as first
+	p := unsafe.Pointer(&key)
+	keyAsUint32 := *(*uint32)(p)
+	predictedIndex, err := itr.plr.predict(float64(keyAsUint32))
 	if err != nil {
-		log.Warn("plr predict failed", zap.Error(err))
+		//log.Warn("plr predict failed", zap.Error(err))
 		return itr.seekBlock(key)
 	}
 
@@ -330,6 +329,7 @@ func (itr *Iterator) seekBlockWithPlr(key []byte) int {
 	lower, upper :=
 		Max(int(predictedIndex)-8, 0), Min(int(predictedIndex)+8+1, maxBlockSize)
 
+	//log.Info("PLR: ", zap.String("filename", itr.plr.FName), zap.String("key", string(key)), zap.Float64("k", float64(k)), zap.Int("lower", lower), zap.Int("upper", upper))
 	// make sure lower and upper are all valid,
 	// as lower might be a value predicted to be too big, upper might be too small
 	if lower >= maxBlockSize || upper < 1 {
@@ -342,7 +342,7 @@ func (itr *Iterator) seekBlockWithPlr(key []byte) int {
 	})
 	// targetIndex is a value always between [0, 17],
 	// need to switch to the correct index again by adding the lower
-	log.Info("targetIndex found", zap.Int("targetIndex", targetIndex))
+	// log.Info("targetIndex found", zap.Int("targetIndex", targetIndex))
 	return lower + targetIndex
 }
 
